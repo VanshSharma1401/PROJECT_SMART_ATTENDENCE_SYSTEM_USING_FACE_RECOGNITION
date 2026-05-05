@@ -34,14 +34,13 @@ smart_attendance_system/
 - Webcam registration with 20-30 images per user.
 - Face validation that rejects frames with no face, multiple faces, poor lighting, or blur.
 - Dataset layout: `dataset/{person_name}/image.jpg`.
-- Dlib HOG detection and ResNet 128-dimensional face embeddings through `face_recognition`.
-- Encoding cache at `encodings/known_faces.pkl`; rebuilds only when dataset files change.
-- Real-time CPU recognition with 50% downscaling and alternate-frame processing.
-- Euclidean distance matching with configurable threshold, default `0.55`.
+- OpenCV Haar Cascades for robust face detection and OpenCV LBPH Face Recognizer for real-time identification.
+- Model cache at `encodings/lbph_model.yml` and label mapping at `encodings/known_faces.pkl`; rebuilds only when dataset files change.
+- Real-time CPU recognition with configurable parameters.
+- Distance matching with LBPH threshold, default `< 85.0` for a Valid match.
 - Confidence classes:
-  - `< 0.45`: `Valid`
-  - `0.45-0.55`: `Probable`
-  - `>= 0.55`: `Invalid`
+  - `< 85.0`: `Valid`
+  - `>= 85.0`: `Invalid`
 - CSV attendance by default at `logs/attendance.csv`.
 - SQLite backend at `logs/attendance.db`.
 - 60-minute duplicate prevention using in-memory state plus log/database history.
@@ -51,78 +50,26 @@ smart_attendance_system/
 
 ## Setup
 
-Use Python 3.10 or 3.11. Avoid Python 3.13 for this project because `face_recognition` depends on `dlib`, and `dlib` frequently needs native compilation when compatible binary packages are unavailable.
+Use Python 3.10 or 3.11. The system runs completely on native OpenCV, ensuring maximum compatibility across Mac, Windows, and Linux without the need for complex C++ compilers or external libraries like dlib.
 
-### Fix for `Failed building wheel for dlib`
-
-If your terminal shows `python3.13`, `/opt/anaconda3/lib/python3.13`, or `Failed building wheel for dlib`, recreate the environment with Python 3.11:
-
-```bash
-cd smart_attendance_system
-conda deactivate
-conda env create -f environment.yml
-conda activate smart-attendance
-python -c "import cv2, dlib, face_recognition, streamlit; print('install ok')"
-streamlit run app.py
-```
-
-If the environment already exists:
-
-```bash
-conda env remove -n smart-attendance
-conda env create -f environment.yml
-conda activate smart-attendance
-```
-
-### macOS
+### macOS, Windows, and Linux Setup
 
 Recommended if you have Anaconda or Miniconda:
 
 ```bash
+cd smart_attendance_system
 conda env create -f environment.yml
 conda activate smart-attendance
 streamlit run app.py
 ```
 
-Pip-only setup:
+Pip-only setup (works universally):
 
 ```bash
 cd smart_attendance_system
-python3.11 -m venv .venv
-source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
 python -m pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
-```
-
-If `dlib` fails to build, install system tools first:
-
-```bash
-xcode-select --install
-brew install cmake
-pip install -r requirements.txt
-```
-
-### Windows
-
-Install Python 3.10 or 3.11, CMake, and Visual Studio Build Tools with C++ support, then run:
-
-```powershell
-cd smart_attendance_system
-py -m venv .venv
-.venv\Scripts\activate
-python -m pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
-```
-
-### Linux
-
-```bash
-cd smart_attendance_system
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip setuptools wheel
-sudo apt-get update
-sudo apt-get install -y build-essential cmake python3-dev
 pip install -r requirements.txt
 ```
 
@@ -238,12 +185,11 @@ Duplicate prevention checks the most recent mark for each person and blocks new 
 
 Default CPU settings are tuned for standard laptops:
 
-- HOG detector, not CNN.
+- Haar Cascade detector for ultra-fast CPU inference.
 - Frame scale: `0.5`.
 - Process every second frame.
-- Dlib encoding model: `small`.
-- NumPy L2 search by default.
-- Optional FAISS hook in `src/vector_index.py` for larger deployments.
+- LBPH Recognizer for robust classification.
+- SQLite logging backend for robust data storage.
 
 Expected performance depends on CPU and webcam resolution, but the defaults target roughly 15 FPS on common laptop CPUs.
 
