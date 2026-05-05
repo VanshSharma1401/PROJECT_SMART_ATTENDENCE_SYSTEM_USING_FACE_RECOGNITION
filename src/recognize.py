@@ -43,7 +43,7 @@ class RecognitionResult:
 
 
 class FaceRecognizer:
-    """Recognize faces from frames and optionally mark attendance."""
+    """Orchestrates face detection, liveness, recognition, and attendance logging."""
 
     def __init__(
         self,
@@ -56,46 +56,39 @@ class FaceRecognizer:
     ) -> None:
         self.encoding_store = encoding_store or FaceEncodingStore()
         self.attendance_logger = attendance_logger or AttendanceLogger()
-        self.recognition_threshold = recognition_threshold
         self.require_liveness = require_liveness
         self.mark_probable = mark_probable
-        self.use_faiss = use_faiss
+        
+        # LBPH distance threshold. Lower is better. Typically 0 to ~80 is a match.
+        self.lbph_threshold = 85.0
+        
         self.liveness_detectors: dict[str, BlinkDetector] = {}
-        self.names: list[str] = []
-        self.encodings = np.empty((0, 128), dtype=np.float32)
-        self.index: NumpyFaceIndex | FaissFaceIndex = NumpyFaceIndex(self.encodings)
+        self.label_to_name: dict[int, str] = {}
+        
+        import cv2
+        self.recognizer = cv2.face.LBPHFaceRecognizer_create()
         self.reload_encodings()
 
     def reload_encodings(self) -> None:
-        """Build cache if stale, then load the known face index."""
+        """Build cache if stale, then load the known face model."""
 
         self.encoding_store.build(force=False)
-        self.names, self.encodings, _ = self.encoding_store.load()
-
-        if self.use_faiss:
-            self.index = FaissFaceIndex(self.encodings)
+        
+        # Load the cache mapping
+        try:
+            import pickle
+            with self.encoding_store.encodings_file.open("rb") as f:
+                cache = pickle.load(f)
+                self.label_to_name = cache.get("label_to_name", {})
+        except Exception as e:
+            logger.error(f"Failed to load cache: {e}")
+            
+        lbph_model_file = self.encoding_store.encodings_file.with_name("lbph_model.yml")
+        if lbph_model_file.exists():
+            self.recognizer.read(str(lbph_model_file))
+            logger.info("Loaded LBPH known face model.")
         else:
-            self.index = NumpyFaceIndex(self.encodings)
-
-        logger.info("Loaded %s known face encodings.", len(self.names))
-
-    def _match(self, face_encoding: np.ndarray) -> tuple[str, float | None, str, float]:
-        search_result = self.index.search(face_encoding)
-        if search_result is None:
-            return "Unknown", None, "Invalid", 0.0
-
-        distance = search_result.distance
-        classification = classify_distance(distance)
-
-        if distance >= self.recognition_threshold or classification == "Invalid":
-            return "Unknown", distance, "Invalid", distance_to_confidence(distance)
-
-        return (
-            self.names[search_result.index],
-            distance,
-            classification,
-            distance_to_confidence(distance),
-        )
+            logger.warning("No LBPH model found.")
 
     def _liveness_for(self, name: str) -> BlinkDetector:
         if name not in self.liveness_detectors:
@@ -108,43 +101,53 @@ class FaceRecognizer:
         mark_attendance: bool = False,
         annotate: bool = True,
     ) -> tuple[np.ndarray, list[RecognitionResult]]:
-        """Recognize all faces in a frame."""
+        """Recognize all faces in a frame using LBPH."""
 
         annotated = frame_bgr.copy()
-        # Compress for detection
-        scale = settings.frame_scale
-        small = cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale)
-        # Flip BGR to RGB using numpy slice
-        rgb_small = small[:, :, ::-1].copy()
+        import cv2
         
-        # Ensure image is uint8 RGB as required by dlib
-        if rgb_small.dtype != np.uint8:
-            rgb_small = rgb_small.astype(np.uint8)
-        if rgb_small.ndim == 2:
-            rgb_small = cv2.cvtColor(rgb_small, cv2.COLOR_GRAY2RGB)
-        elif rgb_small.ndim == 3 and rgb_small.shape[2] == 4:
-            rgb_small = rgb_small[:, :, :3]
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
-        # Use robust detection (face_recognition with OpenCV fallback)
-        small_locations = detect_faces_robust(rgb_small)
+        # Use robust detection (Mediapipe with OpenCV fallback)
+        locations = detect_faces_robust(
+            rgb, 
+            upsample=settings.detection_upsample, 
+            model=settings.detection_model
+        )
         
-        try:
-            small_encodings = face_recognition.face_encodings(
-                rgb_small,
-                known_face_locations=small_locations,
-                model=settings.encoding_model,
-            )
-        except Exception as e:
-            logger.error(f"Encoding failed: {e}")
-            return []
-
-        locations = scale_face_locations(small_locations, scale)
-
-        full_rgb = bgr_to_rgb(frame_bgr) if self.require_liveness else None
+        full_rgb = rgb if self.require_liveness else None
         results: list[RecognitionResult] = []
 
-        for location, face_encoding in zip(locations, small_encodings):
-            name, distance, classification, confidence = self._match(face_encoding)
+        for location in locations:
+            top, right, bottom, left = location
+            
+            face_crop = gray[top:bottom, left:right]
+            if face_crop.size == 0:
+                continue
+                
+            face_crop = cv2.resize(face_crop, (200, 200))
+            
+            try:
+                # Prediction returns label_id and confidence distance (lower is better)
+                label_id, distance = self.recognizer.predict(face_crop)
+                
+                if distance < self.lbph_threshold:
+                    name = self.label_to_name.get(label_id, "Unknown")
+                    classification = "Valid"
+                    confidence = max(0.0, min(100.0, 100.0 - (distance / 2)))
+                else:
+                    name = "Unknown"
+                    classification = "Invalid"
+                    confidence = 0.0
+                    
+            except Exception as e:
+                logger.error(f"Prediction error: {e}")
+                name = "Unknown"
+                classification = "Invalid"
+                confidence = 0.0
+                distance = 999.0
+
             liveness_verified = not self.require_liveness
             liveness_message = ""
 

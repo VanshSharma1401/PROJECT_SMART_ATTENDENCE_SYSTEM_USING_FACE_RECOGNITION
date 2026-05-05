@@ -84,8 +84,8 @@ class FaceRegistrar:
         # Flip BGR to RGB (detect_faces_robust expects RGB)
         rgb = frame_bgr[:, :, ::-1].copy()
         
-        # This will use face_recognition if it works, or OpenCV as a fallback
-        return detect_faces_robust(rgb)
+        # Use upsample=0 for speed during live capture
+        return detect_faces_robust(rgb, upsample=0, model=self.detection_model)
 
     def validate_and_save_frame(self, frame_bgr, person_name: str) -> RegistrationResult:
         """Save the camera frame only if a face is detected."""

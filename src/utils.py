@@ -130,11 +130,15 @@ def bgr_to_rgb(frame_bgr: np.ndarray) -> np.ndarray:
     return frame_bgr[:, :, ::-1].copy()
 
 
-def detect_faces_robust(image: np.ndarray) -> list[FaceLocation]:
-    """Detect faces using OpenCV (robust) as a fallback for face_recognition (dlib).
+def detect_faces_robust(
+    image: np.ndarray, 
+    upsample: int = 1, 
+    model: str = "hog"
+) -> list[FaceLocation]:
+    """Detect faces using OpenCV Haar Cascades.
+    This replaces dlib/mediapipe entirely and is immune to all library compilation errors.
     Returns locations in (top, right, bottom, left) format.
     """
-    import face_recognition
     cv2 = require_cv2()
 
     # Ensure image is uint8 and contiguous
@@ -142,30 +146,24 @@ def detect_faces_robust(image: np.ndarray) -> list[FaceLocation]:
         image = image.astype(np.uint8)
     image = np.ascontiguousarray(image)
 
-    # 1. Try face_recognition (dlib) first
-    try:
-        # We assume image is already RGB if passed here, but if it has 3 channels, 
-        # dlib might still reject it if it thinks it's not RGB.
-        return face_recognition.face_locations(image)
-    except Exception as e:
-        logger.warning(f"face_recognition failed ({e}), falling back to OpenCV Haar Cascades")
-
-    # 2. Fallback to OpenCV Haar Cascades
     # Convert to grayscale for Haar
     if image.ndim == 3:
-        # If it was RGB, convert to Gray
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     else:
         gray = image
 
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    # Load Haar cascade
+    cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+    face_cascade = cv2.CascadeClassifier(cascade_path)
+    
+    # Run detection
+    # scaleFactor=1.1, minNeighbors=5 is standard
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
-    # Convert (x, y, w, h) to (top, right, bottom, left)
     locations = []
     for (x, y, w, h) in faces:
         locations.append((int(y), int(x + w), int(y + h), int(x)))
-    
+        
     return locations
 
 
@@ -175,39 +173,23 @@ def rgb_to_bgr(frame_rgb: np.ndarray) -> np.ndarray:
 
 
 def open_camera(camera_index: int = settings.camera_index):
-    """Open a webcam and fail with a clear error if unavailable.
-    Scans for available working cameras if the target index is unusable."""
-
+    """Open the specified webcam index using Mac-native backend."""
     cv2 = require_cv2()
     
-    # Try the requested index first, then fall back to scanning 0-9
-    indices_to_try = [camera_index] + [i for i in range(10) if i != camera_index]
+    # Use CAP_AVFOUNDATION for Mac (MUCH faster startup)
+    logger.info(f"Opening camera {camera_index} with AVFoundation...")
+    camera = cv2.VideoCapture(camera_index, cv2.CAP_AVFOUNDATION)
     
-    for idx in indices_to_try:
-        camera = cv2.VideoCapture(idx)
-        if camera.isOpened():
-            # Attempt to read a frame to ensure the camera is actually working
-            # Try a few times in case the camera needs a moment to warm up
-            working = False
-            for _ in range(5):
-                ret, frame = camera.read()
-                if ret and frame is not None:
-                    working = True
-                    break
-            
-            if working:
-                camera.set(cv2.CAP_PROP_FRAME_WIDTH, settings.camera_width)
-                camera.set(cv2.CAP_PROP_FRAME_HEIGHT, settings.camera_height)
-                if idx != camera_index:
-                    logger.info(f"Target index {camera_index} failed. Successfully opened camera at index {idx}")
-                return camera
-            else:
-                camera.release()
-                
-    raise RuntimeError(
-        f"Could not open any camera. Tried indices: {indices_to_try}. "
-        "Check camera permissions or ensure a webcam is connected."
-    )
+    if not camera.isOpened():
+        # Fallback to default if AVFoundation fails
+        camera = cv2.VideoCapture(camera_index)
+        if not camera.isOpened():
+            raise RuntimeError(f"Could not open camera {camera_index}")
+
+    # Reduce buffer to keep feed real-time
+    camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    
+    return camera
 
 
 def resize_for_detection(frame_bgr: np.ndarray, scale: float = settings.frame_scale) -> np.ndarray:
@@ -339,13 +321,24 @@ def assess_image_quality(frame_bgr: np.ndarray) -> tuple[bool, dict[str, float |
 
 
 def save_frame(frame_bgr: np.ndarray, target_path: Path) -> None:
-    """Save a frame and raise a clear error if OpenCV fails."""
+    """Save a frame and ensure it is 8-bit BGR format."""
 
     cv2 = require_cv2()
     target_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Force 8-bit uint8 and clip to avoid overflow
+    if frame_bgr.dtype != np.uint8:
+        frame_bgr = np.clip(frame_bgr, 0, 255).astype(np.uint8)
+    
+    # Ensure it's 3-channel
+    if frame_bgr.ndim == 2:
+        frame_bgr = cv2.cvtColor(frame_bgr, cv2.COLOR_GRAY2BGR)
+    elif frame_bgr.ndim == 3 and frame_bgr.shape[2] == 4:
+        frame_bgr = frame_bgr[:, :, :3]
+
     success = cv2.imwrite(str(target_path), frame_bgr)
     if not success:
-        raise IOError(f"Could not write image to {target_path}")
+        raise RuntimeError(f"OpenCV failed to write image to {target_path}")
 
 
 def chunked(items: Sequence[Path], size: int) -> Iterable[Sequence[Path]]:

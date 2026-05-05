@@ -178,18 +178,20 @@ def register_page() -> None:
         target_count = existing_count + samples
         progress = progress_slot.progress(0.0)
 
-        try:
-            camera = open_camera(int(camera_index))
-        except RuntimeError as exc:
-            st.error(str(exc))
-            return
+        with st.spinner("Initializing camera..."):
+            try:
+                camera = open_camera(int(camera_index))
+            except RuntimeError as exc:
+                st.error(str(exc))
+                return
 
         last_capture = 0.0
         start_time = time.time()
         last_message = "Camera ready"
 
+        current_count = existing_count
         try:
-            while registrar.count_samples(safe_name) < target_count:
+            while current_count < target_count:
                 ok, frame = camera.read()
                 if not ok:
                     st.error("Camera frame could not be read.")
@@ -201,6 +203,8 @@ def register_page() -> None:
                     result = registrar.validate_and_save_frame(frame, safe_name)
                     last_capture = now
                     last_message = result.message
+                    if result and result.saved:
+                        current_count += 1
 
                 annotated = frame.copy()
                 if result and result.face_location:
@@ -212,7 +216,6 @@ def register_page() -> None:
                         color,
                     )
 
-                current_count = registrar.count_samples(safe_name)
                 cv2.putText(
                     annotated,
                     f"{safe_name}: {current_count}/{target_count}",
@@ -240,7 +243,7 @@ def register_page() -> None:
                 if time.time() - start_time > settings.registration_timeout_sec:
                     st.warning("Registration timed out.")
                     break
-                time.sleep(0.02)
+                time.sleep(0.01)
         finally:
             camera.release()
 
@@ -279,7 +282,7 @@ def attendance_page() -> None:
             show_runtime_error("Recognition tools could not be loaded.", exc)
             return
 
-        if len(recognizer.names) == 0:
+        if len(recognizer.label_to_name) == 0:
             st.error("No known face encodings found. Register users and rebuild encodings first.")
             return
 

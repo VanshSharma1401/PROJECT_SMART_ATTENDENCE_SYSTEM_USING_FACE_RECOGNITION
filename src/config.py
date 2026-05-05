@@ -28,8 +28,8 @@ class Settings:
     system_log_file: Path = PROJECT_ROOT / "logs" / "system.log"
 
     camera_index: int = 0
-    camera_width: int = 1280
-    camera_height: int = 720
+    camera_width: int = 640
+    camera_height: int = 480
 
     default_samples_per_user: int = 25
     minimum_samples_per_user: int = 20
