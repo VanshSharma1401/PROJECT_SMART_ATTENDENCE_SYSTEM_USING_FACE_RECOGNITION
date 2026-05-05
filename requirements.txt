@@ -1,0 +1,22 @@
+# Core computer vision stack
+opencv-python>=4.8,<5
+dlib>=19.24
+face-recognition>=1.3.0
+face-recognition-models>=0.3.0
+
+# Data and UI
+numpy>=1.24,<3
+pandas>=2.0,<3
+streamlit>=1.32,<2
+Pillow>=10,<12
+
+# Optional API layer
+fastapi>=0.110,<1
+uvicorn[standard]>=0.27,<1
+
+# Helpful for dlib builds on some systems
+cmake>=3.27
+
+# Optional large-scale vector search:
+# faiss-cpu>=1.8.0
+
