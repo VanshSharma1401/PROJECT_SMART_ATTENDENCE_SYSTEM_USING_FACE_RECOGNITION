@@ -126,14 +126,8 @@ def now_local() -> datetime:
 
 
 def bgr_to_rgb(frame_bgr: np.ndarray) -> np.ndarray:
-    cv2 = require_cv2()
-    if len(frame_bgr.shape) == 2:
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_GRAY2RGB)
-    elif frame_bgr.shape[2] == 4:
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGRA2RGB)
-    else:
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    return np.ascontiguousarray(rgb, dtype=np.uint8)
+    """Flip BGR channels to RGB. Uses the image as-is from the camera."""
+    return frame_bgr[:, :, ::-1].copy()
 
 
 def rgb_to_bgr(frame_rgb: np.ndarray) -> np.ndarray:
@@ -187,7 +181,11 @@ def resize_for_detection(frame_bgr: np.ndarray, scale: float = settings.frame_sc
     if math.isclose(scale, 1.0):
         return frame_bgr
 
-    return cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+    resized = cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+    # Ensure the image dtype is uint8 as required by face_recognition
+    if resized.dtype != np.uint8:
+        resized = resized.astype(np.uint8)
+    return resized
 
 
 def scale_face_locations(locations: Sequence[FaceLocation], scale: float) -> List[FaceLocation]:

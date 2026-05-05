@@ -203,14 +203,6 @@ def register_page() -> None:
                     last_message = result.message
 
                 annotated = frame.copy()
-                if result and result.face_location:
-                    color = (40, 180, 80) if result.saved else (0, 180, 255)
-                    draw_face_box(
-                        annotated,
-                        result.face_location,
-                        result.status.replace("_", " ").title(),
-                        color,
-                    )
 
                 current_count = registrar.count_samples(safe_name)
                 cv2.putText(

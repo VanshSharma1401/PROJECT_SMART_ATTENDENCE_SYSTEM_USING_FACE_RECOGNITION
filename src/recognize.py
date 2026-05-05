@@ -110,8 +110,12 @@ class FaceRecognizer:
         """Recognize all faces in a frame."""
 
         annotated = frame_bgr.copy()
-        small_frame = resize_for_detection(frame_bgr, settings.frame_scale)
-        rgb_small = bgr_to_rgb(small_frame)
+        # Compress for detection
+        scale = settings.frame_scale
+        small = cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale)
+        # Flip BGR to RGB using numpy slice
+        rgb_small = small[:, :, ::-1].copy()
+
         small_locations = face_recognition.face_locations(
             rgb_small,
             model=settings.detection_model,
@@ -121,7 +125,7 @@ class FaceRecognizer:
             known_face_locations=small_locations,
             model=settings.encoding_model,
         )
-        locations = scale_face_locations(small_locations, settings.frame_scale)
+        locations = scale_face_locations(small_locations, scale)
 
         full_rgb = bgr_to_rgb(frame_bgr) if self.require_liveness else None
         results: list[RecognitionResult] = []

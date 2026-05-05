@@ -8,21 +8,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
-import face_recognition
 
 from .config import settings
 from .utils import (
     FaceLocation,
-    assess_image_quality,
-    bgr_to_rgb,
     draw_face_box,
     list_image_files,
     logger,
     open_camera,
-    resize_for_detection,
     sanitize_person_name,
     save_frame,
-    scale_face_locations,
 )
 
 
@@ -35,7 +30,6 @@ class RegistrationResult:
     image_path: Path | None
     face_count: int
     face_location: FaceLocation | None
-    quality: dict[str, float | str]
     prompt: str
 
 
@@ -83,65 +77,14 @@ class FaceRegistrar:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         return target_dir / f"{sample_number:03d}_{timestamp}.jpg"
 
-    def detect_faces(self, frame_bgr) -> list[FaceLocation]:
-        small_frame = resize_for_detection(frame_bgr, self.frame_scale)
-        rgb_small = bgr_to_rgb(small_frame)
-        small_locations = face_recognition.face_locations(
-            rgb_small,
-            model=self.detection_model,
-        )
-        return scale_face_locations(small_locations, self.frame_scale)
-
     def validate_and_save_frame(self, frame_bgr, person_name: str) -> RegistrationResult:
-        """Save a frame only when exactly one clear face is visible."""
+        """Take the raw camera frame and save it directly as JPEG."""
 
         safe_name = sanitize_person_name(person_name)
         existing_count = self.count_samples(safe_name)
         prompt = self.next_prompt(existing_count)
 
-        quality_ok, quality = assess_image_quality(frame_bgr)
-        locations = self.detect_faces(frame_bgr)
-        face_count = len(locations)
-
-        if face_count == 0:
-            return RegistrationResult(
-                saved=False,
-                status="no_face",
-                message="No face detected",
-                person_name=safe_name,
-                image_path=None,
-                face_count=0,
-                face_location=None,
-                quality=quality,
-                prompt=prompt,
-            )
-
-        if face_count > 1:
-            return RegistrationResult(
-                saved=False,
-                status="multiple_faces",
-                message="Multiple faces detected",
-                person_name=safe_name,
-                image_path=None,
-                face_count=face_count,
-                face_location=None,
-                quality=quality,
-                prompt=prompt,
-            )
-
-        if not quality_ok:
-            return RegistrationResult(
-                saved=False,
-                status="low_quality",
-                message=f"Image rejected: {quality['reason']}",
-                person_name=safe_name,
-                image_path=None,
-                face_count=face_count,
-                face_location=locations[0],
-                quality=quality,
-                prompt=prompt,
-            )
-
+        # Save the raw camera frame directly — no detection, no conversion
         image_path = self._next_image_path(safe_name)
         save_frame(frame_bgr, image_path)
         logger.info("Saved registration sample: %s", image_path)
@@ -152,9 +95,8 @@ class FaceRegistrar:
             message="Sample saved",
             person_name=safe_name,
             image_path=image_path,
-            face_count=face_count,
-            face_location=locations[0],
-            quality=quality,
+            face_count=1,
+            face_location=None,
             prompt=self.next_prompt(existing_count + 1),
         )
 
