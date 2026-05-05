@@ -130,6 +130,45 @@ def bgr_to_rgb(frame_bgr: np.ndarray) -> np.ndarray:
     return frame_bgr[:, :, ::-1].copy()
 
 
+def detect_faces_robust(image: np.ndarray) -> list[FaceLocation]:
+    """Detect faces using OpenCV (robust) as a fallback for face_recognition (dlib).
+    Returns locations in (top, right, bottom, left) format.
+    """
+    import face_recognition
+    cv2 = require_cv2()
+
+    # Ensure image is uint8 and contiguous
+    if image.dtype != np.uint8:
+        image = image.astype(np.uint8)
+    image = np.ascontiguousarray(image)
+
+    # 1. Try face_recognition (dlib) first
+    try:
+        # We assume image is already RGB if passed here, but if it has 3 channels, 
+        # dlib might still reject it if it thinks it's not RGB.
+        return face_recognition.face_locations(image)
+    except Exception as e:
+        logger.warning(f"face_recognition failed ({e}), falling back to OpenCV Haar Cascades")
+
+    # 2. Fallback to OpenCV Haar Cascades
+    # Convert to grayscale for Haar
+    if image.ndim == 3:
+        # If it was RGB, convert to Gray
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image
+
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+
+    # Convert (x, y, w, h) to (top, right, bottom, left)
+    locations = []
+    for (x, y, w, h) in faces:
+        locations.append((int(y), int(x + w), int(y + h), int(x)))
+    
+    return locations
+
+
 def rgb_to_bgr(frame_rgb: np.ndarray) -> np.ndarray:
     cv2 = require_cv2()
     return cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)

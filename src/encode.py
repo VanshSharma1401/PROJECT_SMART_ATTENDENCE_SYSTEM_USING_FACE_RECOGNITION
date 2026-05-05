@@ -12,7 +12,12 @@ from typing import Any
 import numpy as np
 
 from .config import settings
-from .utils import dataset_signature, list_image_files, logger
+from .utils import (
+    dataset_signature,
+    detect_faces_robust,
+    list_image_files,
+    logger,
+)
 
 
 CACHE_VERSION = 1
@@ -130,10 +135,20 @@ class FaceEncodingStore:
 
             try:
                 image_rgb = face_recognition.load_image_file(str(image_path))
-                locations = face_recognition.face_locations(
-                    image_rgb,
-                    model=self.detection_model,
-                )
+                
+                # Ensure image is uint8 RGB as required by dlib
+                if image_rgb.dtype != np.uint8:
+                    image_rgb = image_rgb.astype(np.uint8)
+                if image_rgb.ndim == 2:
+                    import cv2
+                    image_rgb = cv2.cvtColor(image_rgb, cv2.COLOR_GRAY2RGB)
+                elif image_rgb.ndim == 3 and image_rgb.shape[2] == 4:
+                    image_rgb = image_rgb[:, :, :3]
+                
+                image_rgb = np.ascontiguousarray(image_rgb)
+
+                # Use robust detection (face_recognition with OpenCV fallback)
+                locations = detect_faces_robust(image_rgb)
 
                 if len(locations) == 0:
                     errors.append(f"{relative_path}: no face detected")
@@ -225,10 +240,20 @@ class FaceEncodingStore:
                 relative_path = str(image_path.relative_to(self.dataset_dir))
                 try:
                     image_rgb = face_recognition.load_image_file(str(image_path))
-                    locations = face_recognition.face_locations(
-                        image_rgb,
-                        model=self.detection_model,
-                    )
+                    
+                    # Ensure image is uint8 RGB as required by dlib
+                    if image_rgb.dtype != np.uint8:
+                        image_rgb = image_rgb.astype(np.uint8)
+                    if image_rgb.ndim == 2:
+                        import cv2
+                        image_rgb = cv2.cvtColor(image_rgb, cv2.COLOR_GRAY2RGB)
+                    elif image_rgb.ndim == 3 and image_rgb.shape[2] == 4:
+                        image_rgb = image_rgb[:, :, :3]
+                    
+                    image_rgb = np.ascontiguousarray(image_rgb)
+
+                    # Use robust detection
+                    locations = detect_faces_robust(image_rgb)
                     if len(locations) == 1:
                         people[person_name]["valid"] += 1
                     else:

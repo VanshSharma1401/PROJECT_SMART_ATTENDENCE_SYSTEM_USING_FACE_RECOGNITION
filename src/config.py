@@ -36,7 +36,8 @@ class Settings:
     maximum_samples_per_user: int = 30
 
     detection_model: str = "hog"
-    encoding_model: str = "small"
+    detection_upsample: int = 2
+    encoding_model: str = "large"
     frame_scale: float = 0.5
     process_every_n_frames: int = 2
 

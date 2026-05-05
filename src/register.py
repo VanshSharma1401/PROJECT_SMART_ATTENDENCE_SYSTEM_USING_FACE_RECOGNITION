@@ -8,10 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
+import face_recognition
 
 from .config import settings
 from .utils import (
     FaceLocation,
+    detect_faces_robust,
     draw_face_box,
     list_image_files,
     logger,
@@ -77,14 +79,37 @@ class FaceRegistrar:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         return target_dir / f"{sample_number:03d}_{timestamp}.jpg"
 
+    def detect_faces(self, frame_bgr) -> list[FaceLocation]:
+        """Detect faces robustly using the camera frame."""
+        # Flip BGR to RGB (detect_faces_robust expects RGB)
+        rgb = frame_bgr[:, :, ::-1].copy()
+        
+        # This will use face_recognition if it works, or OpenCV as a fallback
+        return detect_faces_robust(rgb)
+
     def validate_and_save_frame(self, frame_bgr, person_name: str) -> RegistrationResult:
-        """Take the raw camera frame and save it directly as JPEG."""
+        """Save the camera frame only if a face is detected."""
 
         safe_name = sanitize_person_name(person_name)
         existing_count = self.count_samples(safe_name)
         prompt = self.next_prompt(existing_count)
 
-        # Save the raw camera frame directly — no detection, no conversion
+        locations = self.detect_faces(frame_bgr)
+        face_count = len(locations)
+
+        if face_count == 0:
+            return RegistrationResult(
+                saved=False,
+                status="no_face",
+                message="No face detected",
+                person_name=safe_name,
+                image_path=None,
+                face_count=0,
+                face_location=None,
+                prompt=prompt,
+            )
+
+        # Save the raw camera frame directly
         image_path = self._next_image_path(safe_name)
         save_frame(frame_bgr, image_path)
         logger.info("Saved registration sample: %s", image_path)
@@ -95,8 +120,8 @@ class FaceRegistrar:
             message="Sample saved",
             person_name=safe_name,
             image_path=image_path,
-            face_count=1,
-            face_location=None,
+            face_count=face_count,
+            face_location=locations[0],
             prompt=self.next_prompt(existing_count + 1),
         )
 

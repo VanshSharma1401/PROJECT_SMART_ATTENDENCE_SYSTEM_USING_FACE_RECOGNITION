@@ -18,6 +18,7 @@ from .utils import (
     FaceLocation,
     bgr_to_rgb,
     classify_distance,
+    detect_faces_robust,
     distance_to_confidence,
     draw_face_box,
     logger,
@@ -115,16 +116,28 @@ class FaceRecognizer:
         small = cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale)
         # Flip BGR to RGB using numpy slice
         rgb_small = small[:, :, ::-1].copy()
+        
+        # Ensure image is uint8 RGB as required by dlib
+        if rgb_small.dtype != np.uint8:
+            rgb_small = rgb_small.astype(np.uint8)
+        if rgb_small.ndim == 2:
+            rgb_small = cv2.cvtColor(rgb_small, cv2.COLOR_GRAY2RGB)
+        elif rgb_small.ndim == 3 and rgb_small.shape[2] == 4:
+            rgb_small = rgb_small[:, :, :3]
 
-        small_locations = face_recognition.face_locations(
-            rgb_small,
-            model=settings.detection_model,
-        )
-        small_encodings = face_recognition.face_encodings(
-            rgb_small,
-            known_face_locations=small_locations,
-            model=settings.encoding_model,
-        )
+        # Use robust detection (face_recognition with OpenCV fallback)
+        small_locations = detect_faces_robust(rgb_small)
+        
+        try:
+            small_encodings = face_recognition.face_encodings(
+                rgb_small,
+                known_face_locations=small_locations,
+                model=settings.encoding_model,
+            )
+        except Exception as e:
+            logger.error(f"Encoding failed: {e}")
+            return []
+
         locations = scale_face_locations(small_locations, scale)
 
         full_rgb = bgr_to_rgb(frame_bgr) if self.require_liveness else None
