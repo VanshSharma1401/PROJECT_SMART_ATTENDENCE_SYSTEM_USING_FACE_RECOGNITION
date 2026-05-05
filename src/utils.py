@@ -8,16 +8,31 @@ import re
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple
+from typing import TYPE_CHECKING, Iterable, List, Sequence, Tuple
 
-import cv2
 import numpy as np
 
 from .config import settings
 
+if TYPE_CHECKING:
+    import cv2
+
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 FaceLocation = Tuple[int, int, int, int]  # top, right, bottom, left
+
+
+def require_cv2():
+    """Import OpenCV only when camera/image work is actually used."""
+
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError(
+            "OpenCV is not available in the current environment. "
+            "Activate the project environment and reinstall requirements."
+        ) from exc
+    return cv2
 
 
 def setup_logging(log_file: Path | None = None, level: int = logging.INFO) -> logging.Logger:
@@ -111,32 +126,61 @@ def now_local() -> datetime:
 
 
 def bgr_to_rgb(frame_bgr: np.ndarray) -> np.ndarray:
-    return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    cv2 = require_cv2()
+    if len(frame_bgr.shape) == 2:
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_GRAY2RGB)
+    elif frame_bgr.shape[2] == 4:
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGRA2RGB)
+    else:
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    return np.ascontiguousarray(rgb, dtype=np.uint8)
 
 
 def rgb_to_bgr(frame_rgb: np.ndarray) -> np.ndarray:
+    cv2 = require_cv2()
     return cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
 
-def open_camera(camera_index: int = settings.camera_index) -> cv2.VideoCapture:
-    """Open a webcam and fail with a clear error if unavailable."""
+def open_camera(camera_index: int = settings.camera_index):
+    """Open a webcam and fail with a clear error if unavailable.
+    Scans for available working cameras if the target index is unusable."""
 
-    camera = cv2.VideoCapture(camera_index)
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, settings.camera_width)
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, settings.camera_height)
-
-    if not camera.isOpened():
-        raise RuntimeError(
-            f"Camera index {camera_index} could not be opened. "
-            "Check camera permissions or try another index."
-        )
-
-    return camera
+    cv2 = require_cv2()
+    
+    # Try the requested index first, then fall back to scanning 0-9
+    indices_to_try = [camera_index] + [i for i in range(10) if i != camera_index]
+    
+    for idx in indices_to_try:
+        camera = cv2.VideoCapture(idx)
+        if camera.isOpened():
+            # Attempt to read a frame to ensure the camera is actually working
+            # Try a few times in case the camera needs a moment to warm up
+            working = False
+            for _ in range(5):
+                ret, frame = camera.read()
+                if ret and frame is not None:
+                    working = True
+                    break
+            
+            if working:
+                camera.set(cv2.CAP_PROP_FRAME_WIDTH, settings.camera_width)
+                camera.set(cv2.CAP_PROP_FRAME_HEIGHT, settings.camera_height)
+                if idx != camera_index:
+                    logger.info(f"Target index {camera_index} failed. Successfully opened camera at index {idx}")
+                return camera
+            else:
+                camera.release()
+                
+    raise RuntimeError(
+        f"Could not open any camera. Tried indices: {indices_to_try}. "
+        "Check camera permissions or ensure a webcam is connected."
+    )
 
 
 def resize_for_detection(frame_bgr: np.ndarray, scale: float = settings.frame_scale) -> np.ndarray:
     """Downscale a frame before face detection."""
 
+    cv2 = require_cv2()
     if scale <= 0 or scale > 1:
         raise ValueError("Frame scale must be between 0 and 1.")
 
@@ -172,6 +216,7 @@ def draw_face_box(
 ) -> None:
     """Draw a bounding box and readable label on a BGR frame."""
 
+    cv2 = require_cv2()
     top, right, bottom, left = location
     cv2.rectangle(frame_bgr, (left, top), (right, bottom), color, 2)
 
@@ -193,6 +238,7 @@ def draw_face_box(
 def overlay_timestamp(frame_bgr: np.ndarray, timestamp: datetime | None = None) -> None:
     """Add a timestamp overlay to the live frame."""
 
+    cv2 = require_cv2()
     current = timestamp or now_local()
     text = current.strftime("%Y-%m-%d %H:%M:%S")
     cv2.putText(
@@ -234,6 +280,7 @@ def distance_to_confidence(distance: float | None) -> float:
 def assess_image_quality(frame_bgr: np.ndarray) -> tuple[bool, dict[str, float | str]]:
     """Reject frames that are too dark, too bright, or too blurry."""
 
+    cv2 = require_cv2()
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     brightness = float(np.mean(gray))
     blur_variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
@@ -257,6 +304,7 @@ def assess_image_quality(frame_bgr: np.ndarray) -> tuple[bool, dict[str, float |
 def save_frame(frame_bgr: np.ndarray, target_path: Path) -> None:
     """Save a frame and raise a clear error if OpenCV fails."""
 
+    cv2 = require_cv2()
     target_path.parent.mkdir(parents=True, exist_ok=True)
     success = cv2.imwrite(str(target_path), frame_bgr)
     if not success:
@@ -266,4 +314,3 @@ def save_frame(frame_bgr: np.ndarray, target_path: Path) -> None:
 def chunked(items: Sequence[Path], size: int) -> Iterable[Sequence[Path]]:
     for index in range(0, len(items), size):
         yield items[index : index + size]
-

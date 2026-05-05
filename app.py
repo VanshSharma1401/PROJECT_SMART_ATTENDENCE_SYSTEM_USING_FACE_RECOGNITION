@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
-import cv2
 import pandas as pd
 import streamlit as st
 
 from src.attendance import AttendanceLogger
 from src.config import ensure_project_dirs, settings
 from src.encode import FaceEncodingStore
-from src.recognize import FaceRecognizer
-from src.register import FaceRegistrar
 from src.utils import (
     bgr_to_rgb,
     draw_face_box,
@@ -76,6 +72,29 @@ def load_logs(storage: str, limit: int | None = 200) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def show_runtime_error(title: str, exc: Exception) -> None:
+    st.error(title)
+    st.code(str(exc))
+
+
+def import_cv2():
+    import cv2
+
+    return cv2
+
+
+def import_face_registrar():
+    from src.register import FaceRegistrar
+
+    return FaceRegistrar
+
+
+def import_face_recognizer():
+    from src.recognize import FaceRecognizer
+
+    return FaceRecognizer
+
+
 def dashboard_page() -> None:
     st.title("Smart Attendance System")
 
@@ -113,10 +132,14 @@ def dashboard_page() -> None:
         st.markdown(f'<span class="{pill_class}">{label}</span>', unsafe_allow_html=True)
         st.write(f"Cache file: `{settings.encodings_file.name}`")
         if st.button("Rebuild Encodings", use_container_width=True):
-            report = store.build(force=True)
-            st.success(
-                f"Encoded {report.encoded_faces} faces from {report.total_images} images."
-            )
+            try:
+                report = store.build(force=True)
+            except Exception as exc:  # noqa: BLE001
+                show_runtime_error("Encoding rebuild failed.", exc)
+            else:
+                st.success(
+                    f"Encoded {report.encoded_faces} faces from {report.total_images} images."
+                )
 
 
 def register_page() -> None:
@@ -143,7 +166,14 @@ def register_page() -> None:
             st.error(str(exc))
             return
 
-        registrar = FaceRegistrar()
+        try:
+            cv2 = import_cv2()
+            FaceRegistrar = import_face_registrar()
+            registrar = FaceRegistrar()
+        except Exception as exc:  # noqa: BLE001
+            show_runtime_error("Registration tools could not be loaded.", exc)
+            return
+
         existing_count = registrar.count_samples(safe_name)
         target_count = existing_count + samples
         progress = progress_slot.progress(0.0)
@@ -236,19 +266,25 @@ def attendance_page() -> None:
     metric_slot = st.empty()
 
     if st.button("Start Attendance Session", type="primary", use_container_width=True):
-        attendance_logger = AttendanceLogger(storage=storage)  # type: ignore[arg-type]
-        recognizer = FaceRecognizer(
-            attendance_logger=attendance_logger,
-            recognition_threshold=threshold,
-            require_liveness=require_liveness,
-            mark_probable=mark_probable,
-        )
+        try:
+            FaceRecognizer = import_face_recognizer()
+            attendance_logger = AttendanceLogger(storage=storage)  # type: ignore[arg-type]
+            recognizer = FaceRecognizer(
+                attendance_logger=attendance_logger,
+                recognition_threshold=threshold,
+                require_liveness=require_liveness,
+                mark_probable=mark_probable,
+            )
+        except Exception as exc:  # noqa: BLE001
+            show_runtime_error("Recognition tools could not be loaded.", exc)
+            return
 
         if len(recognizer.names) == 0:
             st.error("No known face encodings found. Register users and rebuild encodings first.")
             return
 
         try:
+            cv2 = import_cv2()
             camera = open_camera(int(camera_index))
         except RuntimeError as exc:
             st.error(str(exc))
@@ -343,17 +379,25 @@ def dataset_page() -> None:
     deep = st.checkbox("Deep Validation", value=False)
 
     if st.button("Run Validation", use_container_width=True):
-        health = store.validate_dataset(deep=deep)
-        st.json(health)
+        try:
+            health = store.validate_dataset(deep=deep)
+        except Exception as exc:  # noqa: BLE001
+            show_runtime_error("Dataset validation failed.", exc)
+        else:
+            st.json(health)
 
     if st.button("Rebuild Encodings Now", type="primary", use_container_width=True):
-        report = store.build(force=True)
-        st.success(
-            f"Encoded {report.encoded_faces}/{report.total_images} images for {report.people} people."
-        )
-        if report.errors:
-            st.warning(f"{len(report.errors)} images were skipped.")
-            st.write(report.errors[:25])
+        try:
+            report = store.build(force=True)
+        except Exception as exc:  # noqa: BLE001
+            show_runtime_error("Encoding rebuild failed.", exc)
+        else:
+            st.success(
+                f"Encoded {report.encoded_faces}/{report.total_images} images for {report.people} people."
+            )
+            if report.errors:
+                st.warning(f"{len(report.errors)} images were skipped.")
+                st.write(report.errors[:25])
 
     people = list_people()
     table = [
@@ -396,4 +440,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

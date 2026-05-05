@@ -9,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import face_recognition
 import numpy as np
 
 from .config import settings
@@ -17,6 +16,19 @@ from .utils import dataset_signature, list_image_files, logger
 
 
 CACHE_VERSION = 1
+
+
+def require_face_recognition():
+    """Import face_recognition only when dataset encoding work is requested."""
+
+    try:
+        import face_recognition
+    except ImportError as exc:
+        raise RuntimeError(
+            "face_recognition/dlib is not available in the current environment. "
+            "Use the Python 3.11 environment described in the README."
+        ) from exc
+    return face_recognition
 
 
 @dataclass
@@ -87,6 +99,7 @@ class FaceEncodingStore:
     def build(self, force: bool = False, num_jitters: int = 1) -> EncodingBuildReport:
         """Build encodings only when the dataset changed unless forced."""
 
+        face_recognition = require_face_recognition()
         current_signature = dataset_signature(self.dataset_dir)
         current_cache = self.load_cache()
         if (
@@ -206,6 +219,7 @@ class FaceEncodingStore:
             people[person_name]["images"] += 1
 
         if deep:
+            face_recognition = require_face_recognition()
             for image_path in image_paths:
                 person_name = image_path.parent.name
                 relative_path = str(image_path.relative_to(self.dataset_dir))
@@ -257,4 +271,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -51,13 +51,44 @@ smart_attendance_system/
 
 ## Setup
 
-Use Python 3.9 or newer. Python 3.10 or 3.11 is usually the smoothest choice for `dlib`.
+Use Python 3.10 or 3.11. Avoid Python 3.13 for this project because `face_recognition` depends on `dlib`, and `dlib` frequently needs native compilation when compatible binary packages are unavailable.
 
-### macOS
+### Fix for `Failed building wheel for dlib`
+
+If your terminal shows `python3.13`, `/opt/anaconda3/lib/python3.13`, or `Failed building wheel for dlib`, recreate the environment with Python 3.11:
 
 ```bash
 cd smart_attendance_system
-python3 -m venv .venv
+conda deactivate
+conda env create -f environment.yml
+conda activate smart-attendance
+python -c "import cv2, dlib, face_recognition, streamlit; print('install ok')"
+streamlit run app.py
+```
+
+If the environment already exists:
+
+```bash
+conda env remove -n smart-attendance
+conda env create -f environment.yml
+conda activate smart-attendance
+```
+
+### macOS
+
+Recommended if you have Anaconda or Miniconda:
+
+```bash
+conda env create -f environment.yml
+conda activate smart-attendance
+streamlit run app.py
+```
+
+Pip-only setup:
+
+```bash
+cd smart_attendance_system
+python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
@@ -252,4 +283,3 @@ Screenshot descriptions:
 7. Back up `logs/attendance.csv` or `logs/attendance.db`.
 8. Implement a real provider from `src/cloud_sync.py` for cloud backup.
 9. Place the app behind authenticated access if Streamlit is hosted on a network.
-
